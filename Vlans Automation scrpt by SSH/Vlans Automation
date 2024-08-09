@@ -1,0 +1,182 @@
+import re
+BLUE = '\033[94m'
+RED = '\033[91m'
+GREEN = '\033[32m'
+RESET = '\033[0m'
+
+#function for checking an IP address's validation 
+def is_valid_ip(ip_add):
+    try:
+        octets = ip_add.split('.')#dividing an IP address into 4 octets
+        if len(octets) != 4: #checking ip function. if its not valid it'll return False
+            return False
+        for i,octet in enumerate(octets):
+            if i == 2 and int(octet) > 26:# the third octet's argument should be less than 26, if its not it will be displayed Error 
+                return False
+            if not octet.isdigit():#checking each octet is number
+                return False
+            if not 0 <= int(octet) <= 255: #and of course each octet of IP address should be less than 255 and more 0
+                return False
+        return True
+    except ValueError:
+        return False
+#function for checking a subnet mask's validation
+def is_valid_subnet_mask(subnet_mask):
+    try:
+        if not 1 <= int(subnet_mask) <= 32: #subnet mask should be between 1-32 
+            return False
+        if not subnet_mask.isdigit():
+            return False
+        return True
+    except ValueError:
+        return False
+#function for checking a start_vlan for validation
+def is_valid_vlan(start_vlan):
+    try:
+        if not 500<= int(start_vlan) <= 4000: #the most essential, vlans can not be more than 4096, but we are here adding +7 for each value, so then i gave this parametre
+            return False
+        if not start_vlan.isdigit():
+            return False
+        return True
+    except ValueError:
+        return False
+
+#function for checking an interface for validation
+def is_valid_interface(inter):
+    try:
+        if not inter.isdigit():
+            return False
+
+        interface_number = int(inter)
+
+        if 0 <= interface_number <= 5 or 24 <= interface_number <= 27: #default arguments for interfaces
+            return True
+        else:
+            return False
+    except ValueError:
+        return False
+
+#we've used a regions by their ip addresses
+regions = {
+    #put here regions 
+}
+
+
+def main():
+    try:
+#writing commands into .txt file
+        while True:
+            start_vlan = input("Enter the start VLAN number: ")
+            if is_valid_vlan(start_vlan):
+                start_vlan = int(start_vlan)
+                with open('data.txt', 'a') as file:
+                    file.write(f"Starting Vlan: {start_vlan}\n")
+                break  
+            print(f"{RED}Starting VLAN number is out of the possible range. Vlan number should be between 500-4000.{RESET}")
+
+        end_vlan = start_vlan + 7  # added start vlan+7
+        print(f"{GREEN}Generating commands for VLAN configuration{RESET}")
+
+        commands = []
+
+        output = 'system-view'
+        commands.append(output)
+        output = f'vlan batch {start_vlan} to {end_vlan}'
+        commands.append(output)
+        print(f"{GREEN}Configured VLANs{RESET}")
+        print(output)
+
+        while True:
+            ip_add = input("Enter the starting IP address: ")
+            if is_valid_ip(ip_add):
+                with open('data.txt', 'a') as file:
+                    file.write(f"Starting IP: {ip_add}\n")
+                break
+            print(f"{RED}Invalid IP address. Please enter a valid IP address.\n1) Ensure that IP address argument is less than 255. \n2) Don't use specific symbols/letters. Use only numbers.\n3) Please check the length of octets.Each octet should be less than 4.{RESET}")
+        
+        while True:
+            sub_mask = input(f"Enter the subnet mask for IP address {ip_add}: ")
+            if is_valid_subnet_mask(sub_mask):
+                with open('data.txt', 'a') as file:
+                    file.write(f"Subnet Mask: {sub_mask}\n")
+                break
+            print(f"{RED}Invalid subnet mask. Please enter a valid subnet mask(1-32).{RESET}")
+
+        octets = ip_add.split('.')
+        base_ip = int(octets[2])
+        #getting end vlan number by adding +32 for base ip(=0) and using vlan_id-start_vlan
+        for vlan_id in range(start_vlan, end_vlan + 1):
+            new_third_octet = base_ip + (vlan_id - start_vlan) * 32
+            if new_third_octet > 255:
+                print(f"Warning: Third octet {new_third_octet} is out of range for VLAN {vlan_id}.")
+                continue
+            new_ip = f"{octets[0]}.{octets[1]}.{new_third_octet}.{octets[3]}"#creating new ip
+           #you can put here any command you like to
+            vlan_commands = [
+                f'\ninterface vlanif{vlan_id}',
+                'ip binding vpn-instance Instance_Name',
+                f'ip address {new_ip} {sub_mask}',
+                'statistic enable',
+            ]
+            commands.extend(vlan_commands)
+            #getting the next vlan_id
+            if vlan_id == start_vlan + 2:
+                while True:
+                    region = input(f"Enter the region for VLAN {vlan_id} (e.g., KZ, AL): ").upper()
+                    if region in regions:
+                        region_ips = regions[region]
+                        break
+                    print(f"{RED}Invalid region. Please enter a valid region.{RESET}")
+
+                # Add all ip relay address commands first
+                for ip in region_ips:
+                    vlan_commands.append(f'ip relay address {ip}')
+                vlan_commands.append('dhcp select relay')
+                # Add the ip relay giaddr command last
+                vlan_commands.append(f'ip relay giaddr {new_ip}')
+
+            commands.extend(vlan_commands)
+        #using here Interface validation function and writing it on .txt file
+        while True:
+            inter = input("Enter Interface number(gi0/2/...):")
+            if is_valid_interface(inter):
+               with open('data.txt', 'a') as file:
+                  file.write(f"Chosen interface: {inter}\n")
+               break
+            print(f"{RED}Invalid interface. Please enter a valid interface.(0-5 or 24-27){RESET}")
+
+        description = input(f"Enter description of VLAN(gi0/2/{inter}):")# interface number depends on your device
+
+        #trunk commands entering
+        trunk_commands = [
+            f'\ninterface gi0/2/{inter}',
+            f'description {BLUE}{description}{RESET}',
+            'portswitch',
+            'port link-type trunk',
+            f'port trunk allow-pass vlan {start_vlan} to {end_vlan}',
+            f'trust upstream default vlan {start_vlan} to {end_vlan}'
+        ]
+        commands.extend(trunk_commands)
+
+        commands_for_save = [
+            'commit',
+            'quit'
+        ]
+        commands.extend(commands_for_save)
+
+        # Write commands to file
+        with open('commands.txt', 'w') as file:
+            for command in commands:
+                file.write(command + '\n')
+
+        # Print commands to the screen
+        for command in commands:
+            print(f"{GREEN}{command}{RESET}")
+
+    except Exception as e:
+        print(f"{RED}Error: {e}{RESET}")
+
+
+if __name__ == "__main__":
+    main()
+
